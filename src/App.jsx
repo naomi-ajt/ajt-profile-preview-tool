@@ -740,10 +740,47 @@ function normalizeCandidateSearchProfile(raw) {
   };
 }
 
+// Session-level cache so switching job types and back doesn't re-fetch
+const profileCache = new Map();
+
+function profileCacheKey({ jobType, location, languages }) {
+  return `${jobType}|${location}|${[...languages].sort().join(",")}`;
+}
+
+async function fetchAllLiveProfiles(query, { bust = false } = {}) {
+  const key = profileCacheKey(query);
+  if (!bust && profileCache.has(key)) return profileCache.get(key);
+
+  const MAX_PAGES = 3;
+  let allProfiles = [];
+  let from = 0;
+  let dbTotal = null;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { profiles, nextFrom, dbTotal: total } = await fetchLiveProfiles(query, from);
+    allProfiles = allProfiles.concat(profiles);
+    if (dbTotal === null) dbTotal = total;
+    if (!nextFrom) break;
+    from = nextFrom;
+  }
+
+  // Deduplicate across pages
+  const seen = new Set();
+  const unique = allProfiles.filter((p) => {
+    const k = p.name + "|" + p.latestPosition + "|" + p.experience;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  profileCache.set(key, unique);
+  return unique;
+}
+
 async function fetchLiveProfiles({ jobType, location, languages }, from = 0) {
   const jobTitle = JOB_TYPE_TO_TITLE[jobType] || jobType.toLowerCase();
   const body = {
-    size: 200,
+    size: 500,
     from,
     sorting: "lastActiveDate",
     ordering: "desc",
@@ -772,7 +809,6 @@ async function fetchLiveProfiles({ jobType, location, languages }, from = 0) {
   const data = await res.json();
   const rawList = data.hits || data.candidates || data.profiles || data.data || data.results || [];
   // data.total is the unfiltered DB size — use rawList.length as the actual matched count
-  const apiTotal = rawList.length;
   const dbTotal = data.total ?? data.totalHits ?? rawList.length;
   const nextFrom = from + rawList.length < dbTotal ? from + rawList.length : null;
   const profiles = rawList.map(normalizeCandidateSearchProfile);
@@ -783,7 +819,7 @@ async function fetchLiveProfiles({ jobType, location, languages }, from = 0) {
     seen.add(key);
     return true;
   });
-  return { profiles: unique, nextFrom, apiTotal };
+  return { profiles: unique, nextFrom, dbTotal };
 }
 
 const malaysianLocations = [
@@ -1085,10 +1121,10 @@ export default function AJTInteractiveSalesCatalogue() {
   const [apiLoading, setApiLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [isLiveData, setIsLiveData] = useState(false);
-  const [nextFrom, setNextFrom] = useState(null);
-  const [apiTotal, setApiTotal] = useState(null);
   const [summaries, setSummaries] = useState({});
   const [summariesLoading, setSummariesLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const profileCardsRef = useRef(null);
 
   const testResult = useMemo(() => runCatalogueTests(), []);
@@ -1098,20 +1134,19 @@ export default function AJTInteractiveSalesCatalogue() {
     setApiLoading(true);
     setApiError(null);
     setPool([]);
-    setApiTotal(null);
-    fetchLiveProfiles({ jobType: selectedJobType, location: locationFilter, languages: requiredLanguages }, 0)
-      .then(({ profiles, nextFrom: next, apiTotal: total }) => {
+    setShowAll(false);
+    const query = { jobType: selectedJobType, location: locationFilter, languages: requiredLanguages };
+    const bust = refreshKey > 0;
+    fetchAllLiveProfiles(query, { bust })
+      .then((profiles) => {
         if (cancelled) return;
         if (profiles.length > 0) {
           setPool(profiles);
           setIsLiveData(true);
-          setApiTotal(total);
         } else {
           setPool(profilePool);
           setIsLiveData(false);
-          setApiTotal(0);
         }
-        setNextFrom(next);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -1121,7 +1156,7 @@ export default function AJTInteractiveSalesCatalogue() {
       })
       .finally(() => { if (!cancelled) setApiLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedJobType, locationFilter, requiredLanguages]);
+  }, [selectedJobType, locationFilter, requiredLanguages, refreshKey]);
 
   const eligibleProfiles = useMemo(() => {
     if (isLiveData) {
@@ -1150,20 +1185,24 @@ export default function AJTInteractiveSalesCatalogue() {
     return [...result].sort((a, b) => b.match - a.match);
   }, [pool, isLiveData, selectedJobType, locationFilter, requiredLanguages]);
 
-  const filteredProfiles = useMemo(() => eligibleProfiles.slice(0, 5), [eligibleProfiles]);
+  const INITIAL_SHOW = 9;
+  const displayedProfiles = useMemo(
+    () => showAll ? eligibleProfiles : eligibleProfiles.slice(0, INITIAL_SHOW),
+    [eligibleProfiles, showAll]
+  );
 
   // Summarise the displayed profiles using Claude Haiku — cache hits are free, misses are batched
   useEffect(() => {
-    if (!isLiveData || filteredProfiles.length === 0) return;
+    if (!isLiveData || displayedProfiles.length === 0) return;
     let cancelled = false;
     async function loadSummaries() {
       setSummariesLoading(true);
       try {
-        const ids = filteredProfiles.map((p) => p.id);
+        const ids = displayedProfiles.map((p) => p.id);
         const cached = await getCachedSummaries(ids);
         if (!cancelled) setSummaries((prev) => ({ ...prev, ...cached }));
 
-        const uncached = filteredProfiles.filter((p) => !cached[p.id] && p.careerSnapshot);
+        const uncached = displayedProfiles.filter((p) => !cached[p.id] && p.careerSnapshot);
         if (!uncached.length) return;
 
         const res = await fetch("/api/summarize", {
@@ -1188,7 +1227,7 @@ export default function AJTInteractiveSalesCatalogue() {
     }
     loadSummaries();
     return () => { cancelled = true; };
-  }, [filteredProfiles, isLiveData]);
+  }, [displayedProfiles, isLiveData]);
 
   const comparisonRows = useMemo(() => {
     return competitors.map((c, i) => {
@@ -1213,7 +1252,7 @@ export default function AJTInteractiveSalesCatalogue() {
   }
 
   async function handleShare() {
-    if (filteredProfiles.length === 0) return;
+    if (displayedProfiles.length === 0) return;
     try {
       const html2canvas = (await import("html2canvas")).default;
       const canvas = await html2canvas(profileCardsRef.current, {
@@ -1337,30 +1376,37 @@ export default function AJTInteractiveSalesCatalogue() {
                 </div>
               </div>
 
-              {/* Result count + share */}
+              {/* Result count + refresh + share */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-                <div style={{ ...styles.small }}>
-                  {filteredProfiles.length > 0 ? (
-                    <span>
-                      Showing top <b>{filteredProfiles.length}</b> of <b>{eligibleProfiles.length}</b> eligible {selectedJobType} candidate{eligibleProfiles.length !== 1 ? "s" : ""}
-                      {(requiredLanguages.length > 0 || locationFilter) ? " matching your requirements" : ""}
-                      {isLiveData && apiTotal != null ? <span style={{ color: "#94a3b8" }}> · {apiTotal} returned by search</span> : null}
-                    </span>
-                  ) : (
-                    <span>
-                      No candidates match the current requirements for {selectedJobType}
-                      {isLiveData && apiTotal != null ? <span style={{ color: "#94a3b8" }}> ({apiTotal} returned by search)</span> : null}
-                    </span>
-                  )}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ ...styles.small }}>
+                    {displayedProfiles.length > 0 ? (
+                      <span>
+                        Showing <b>{displayedProfiles.length}</b>{!showAll && eligibleProfiles.length > INITIAL_SHOW ? ` of ${eligibleProfiles.length}` : ""} eligible {selectedJobType} candidate{eligibleProfiles.length !== 1 ? "s" : ""}
+                        {(requiredLanguages.length > 0 || locationFilter) ? " matching your requirements" : ""}
+                      </span>
+                    ) : (
+                      <span>No candidates match the current requirements for {selectedJobType}</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRefreshKey((k) => k + 1)}
+                    disabled={apiLoading}
+                    title="Refresh profiles"
+                    style={{ background: "none", border: "1px solid #e2e8f0", borderRadius: 8, padding: "4px 10px", cursor: apiLoading ? "default" : "pointer", fontSize: 13, color: "#64748b" }}
+                  >
+                    {apiLoading ? "Loading…" : "↻ Refresh"}
+                  </button>
                 </div>
                 <button
                   type="button"
                   onClick={handleShare}
-                  disabled={filteredProfiles.length === 0}
+                  disabled={displayedProfiles.length === 0}
                   style={{
                     ...styles.button,
                     background: shared ? "#166534" : "#0f172a",
-                    opacity: filteredProfiles.length === 0 ? 0.4 : 1,
+                    opacity: displayedProfiles.length === 0 ? 0.4 : 1,
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
@@ -1368,7 +1414,7 @@ export default function AJTInteractiveSalesCatalogue() {
                   }}
                 >
                   <Icon name="share" size={16} />
-                  {shared ? "Copied as image" : `Share these ${filteredProfiles.length} profiles`}
+                  {shared ? "Copied as image" : `Share these ${displayedProfiles.length} profiles`}
                 </button>
               </div>
 
@@ -1382,7 +1428,7 @@ export default function AJTInteractiveSalesCatalogue() {
                 </div>
               )}
               <div ref={profileCardsRef} className="ajt-grid-3" style={{ ...styles.grid3, display: apiLoading ? "none" : styles.grid3.display }}>
-                {filteredProfiles.map((p) => (
+                {displayedProfiles.map((p) => (
                   <Card key={p.id}>
                     <div style={{ padding: 20 }}>
                       <div style={{ marginBottom: 14 }}>
@@ -1433,12 +1479,25 @@ export default function AJTInteractiveSalesCatalogue() {
                     </div>
                   </Card>
                 ))}
-                {filteredProfiles.length === 0 && (
+                {displayedProfiles.length === 0 && !apiLoading && (
                   <div style={{ ...styles.small, gridColumn: "1 / -1", padding: 24, textAlign: "center" }}>
                     No candidates match the current requirements. Try adjusting the industry or language filters.
                   </div>
                 )}
               </div>
+
+              {/* Show all / show fewer toggle */}
+              {eligibleProfiles.length > INITIAL_SHOW && (
+                <div style={{ textAlign: "center", marginTop: 20 }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowAll((v) => !v)}
+                    style={{ ...styles.button, background: "#f1f5f9", color: "#0f172a", border: "1px solid #e2e8f0" }}
+                  >
+                    {showAll ? `Show fewer profiles` : `Show all ${eligibleProfiles.length} profiles`}
+                  </button>
+                </div>
+              )}
             </div>
           </Card>
         )}
@@ -1532,20 +1591,6 @@ export default function AJTInteractiveSalesCatalogue() {
           </Card>
         )}
 
-        <Card>
-          <div style={{ ...styles.cardPad, display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", color: "#475569", fontSize: 14 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}><Icon name="calculator" size={18} /> {apiError ? "Demo profiles shown — live data unavailable." : "Showing live candidate profiles from the AJT candidate search service."}</div>
-            <details style={{ ...styles.mutedBox, padding: "8px 12px", fontSize: 12 }}>
-              <summary style={{ cursor: "pointer", fontWeight: 800 }}>Self-checks: {testResult.passed}/{testResult.total} passed</summary>
-              <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-                {testResult.tests.map((test) => (
-                  <li key={test.name} style={{ color: test.pass ? "#166534" : "#991b1b" }}>{test.pass ? "PASS" : "FAIL"}: {test.name}</li>
-                ))}
-              </ul>
-            </details>
-            <button type="button" style={styles.button}>Use this pitch for {customerName}</button>
-          </div>
-        </Card>
       </div>
     </div>
   );
