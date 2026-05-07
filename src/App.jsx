@@ -954,14 +954,28 @@ function isOpenToWork(p) {
   return av.length > 0 && av !== "—";
 }
 
-// Returns false only when the candidate has a stated preferred job that clearly
-// doesn't overlap with the search title — avoids false exclusions when preference is empty.
-function jobTitleMatches(p, searchTitle) {
-  if (!searchTitle) return true;
-  const preferred = (p.preferredJobTitle || p.jobType || "").toLowerCase();
-  if (!preferred) return true;
-  const words = searchTitle.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-  return words.some((w) => preferred.includes(w));
+// Scores how relevant a candidate is to the search title across three signals:
+// current job (strongest), desired job (medium), skills (lightest).
+// Returns 0 when no search title is given or when no signal matches.
+function computeRelevanceScore(p, searchTitle) {
+  if (!searchTitle) return 0;
+  const needle = searchTitle.toLowerCase().trim();
+  if (!needle) return 0;
+  const words = needle.split(/\s+/).filter((w) => w.length > 2);
+  if (!words.length) return 0;
+
+  const currentJob = ((p.role || "") + " " + (p.latestPosition || "")).toLowerCase();
+  const desiredJob = ((p.preferredJobTitle || "") + " " + (p.jobCategory || "") + " " + (p.jobType || "")).toLowerCase();
+  const skillsText = (p.skills || []).join(" ").toLowerCase();
+
+  const wordFrac = (text) => words.filter((w) => text.includes(w)).length / words.length;
+
+  // Exact phrase hit scores highest; word-level overlap is a fallback
+  const currentScore = Math.max(currentJob.includes(needle) ? 100 : 0, Math.round(wordFrac(currentJob) * 60));
+  const desiredScore = Math.max(desiredJob.includes(needle) ? 75 : 0, Math.round(wordFrac(desiredJob) * 40));
+  const skillsScore  = Math.round(wordFrac(skillsText) * 20);
+
+  return currentScore + desiredScore + skillsScore;
 }
 
 const PROXY_SECRET = import.meta.env.VITE_PROXY_SECRET || "";
@@ -1204,26 +1218,38 @@ export default function AJTInteractiveSalesCatalogue() {
   }, [locationFilter, requiredLanguages, debouncedTitle, refreshKey]);
 
   const eligibleProfiles = useMemo(() => {
+    // Attach relevance score to each profile once so filter and sort share it
+    const withRelevance = pool.map((p) => ({ ...p, relevanceScore: computeRelevanceScore(p, debouncedTitle) }));
+
+    const passesRelevance = (p) => {
+      if (!debouncedTitle) return true;
+      // Candidates with no data in any signal are let through to avoid false exclusions
+      const hasSignal = p.latestPosition || p.role || p.preferredJobTitle || p.jobCategory || (p.skills || []).length > 0;
+      return !hasSignal || p.relevanceScore > 0;
+    };
+
+    const sortByRelevanceThenQuality = (a, b) => b.relevanceScore - a.relevanceScore || b.match - a.match;
+
     if (isLiveData) {
-      return [...pool]
+      return withRelevance
         .filter((p) => {
           if (isTestProfile(p)) return false;
-          if (!jobTitleMatches(p, debouncedTitle)) return false;
+          if (!passesRelevance(p)) return false;
           if (requiredLanguages.length > 0 && !requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang)))) return false;
           // Drop only truly empty profiles — no position, no snapshot, no skills, no languages, and no experience
           if (!p.latestPosition && !p.careerSnapshot && p.skills.length === 0 && p.languages.length === 0 && !p.experience) return false;
           return true;
         })
-        .sort((a, b) => b.match - a.match);
+        .sort(sortByRelevanceThenQuality);
     }
-    let result = pool.filter((p) => !isTestProfile(p));
+    let result = withRelevance.filter((p) => !isTestProfile(p) && passesRelevance(p));
     if (locationFilter.trim()) {
       result = result.filter((p) => p.location.toLowerCase().includes(locationFilter.toLowerCase().trim()));
     }
     if (requiredLanguages.length > 0) {
       result = result.filter((p) => requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang))));
     }
-    return [...result].sort((a, b) => b.match - a.match);
+    return [...result].sort(sortByRelevanceThenQuality);
   }, [pool, isLiveData, locationFilter, requiredLanguages, debouncedTitle]);
 
   const INITIAL_SHOW = 9;
