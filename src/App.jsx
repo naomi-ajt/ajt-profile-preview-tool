@@ -612,7 +612,7 @@ function normalizeApiProfile(raw) {
     jobCategory: raw.interest_job_category || "",
     jobType: raw.interest_job_category || "",
     latestPosition,
-    industry: raw.interest_job_category || "",
+    // industry: raw.interest_job_category || "",
     careerSnapshot: summary,
     urgency: availability ? `${urgencyPrefix} · ${availability.toLowerCase()} availability` : "",
     location: raw.location || "",
@@ -768,7 +768,7 @@ function normalizeCandidateSearchProfile(raw) {
     jobCategory: raw.interest_job_category || "",
     jobType: raw.interest_job_category || raw.preferredJobTitle || expJobTitle || roleFromPosition || "",
     latestPosition,
-    industry: "",
+    // industry: "",
     careerSnapshot: summary,
     urgency: availability ? `${urgencyPrefix} · ${availability.toLowerCase()} availability` : "",
     location: locationStr,
@@ -982,7 +982,7 @@ function isTestProfile(p) {
     TEST_PATTERN.test(p.name) ||
     TEST_PATTERN.test(p.latestPosition) ||
     TEST_PATTERN.test(p.careerSnapshot || "") ||
-    TEST_PATTERN.test(p.industry || "") ||
+    // TEST_PATTERN.test(p.industry || "") ||
     TEST_PATTERN.test(p.education || "") ||
     TEST_PATTERN.test(p.urgency || "") ||
     (p.skills || []).some((s) => TEST_PATTERN.test(s)) ||
@@ -1055,7 +1055,7 @@ function runCatalogueTests() {
     { name: "candidate profiles no longer expose expected salary", pass: profilePool.every((p) => !Object.prototype.hasOwnProperty.call(p, "salary")) },
     { name: "candidate profiles include career highlights", pass: profilePool.every((p) => Array.isArray(p.qualitySignals) && p.qualitySignals.length >= 3) },
     { name: "candidate profiles include language data", pass: profilePool.every((p) => Array.isArray(p.languages) && p.languages.length >= 2) },
-    { name: "candidate profiles include industry classification", pass: profilePool.every((p) => typeof p.industry === "string" && p.industry.length > 0) },
+    // { name: "candidate profiles include industry classification", pass: profilePool.every((p) => typeof p.industry === "string" && p.industry.length > 0) },
     { name: "candidate profiles include career snapshot", pass: profilePool.every((p) => typeof p.careerSnapshot === "string" && p.careerSnapshot.length > 0) },
     { name: "candidate profiles include urgency signal", pass: profilePool.every((p) => typeof p.urgency === "string" && p.urgency.length > 0) },
     { name: "candidate career highlights contain quantified achievements", pass: profilePool.every((p) => p.qualitySignals.some((s) => /\d/.test(s))) },
@@ -1432,7 +1432,6 @@ export default function AJTInteractiveSalesCatalogue() {
     .muted-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-top: 4px; }
     .label { color: #64748b; font-size: 12px; font-weight: 800; margin-bottom: 6px; }
     .position { font-weight: 900; margin-top: 4px; }
-    .industry { font-size: 12px; color: #475569; margin-top: 6px; }
     .meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; }
     .bold { font-weight: 700; }
     .dot { color: #cbd5e1; }
@@ -1718,7 +1717,7 @@ export default function AJTInteractiveSalesCatalogue() {
                 ))}
                 {displayedProfiles.length === 0 && !apiLoading && (
                   <div style={{ ...styles.small, gridColumn: "1 / -1", padding: 24, textAlign: "center" }}>
-                    No candidates match the current requirements. Try adjusting the industry or language filters.
+                    No candidates match the current requirements. Try adjusting the job title or language filters.
                   </div>
                 )}
               </div>
