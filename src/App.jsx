@@ -768,7 +768,7 @@ function normalizeCandidateSearchProfile(raw) {
     jobCategory: raw.interest_job_category || "",
     jobType: raw.interest_job_category || raw.preferredJobTitle || expJobTitle || roleFromPosition || "",
     latestPosition,
-    industry: industryLabel,
+    industry: "",
     careerSnapshot: summary,
     urgency: availability ? `${urgencyPrefix} · ${availability.toLowerCase()} availability` : "",
     location: locationStr,
