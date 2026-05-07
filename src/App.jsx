@@ -847,9 +847,9 @@ const competitorDefaults = [
 
 const tabs = [
   { id: "profiles", label: "Candidate proof" },
-  { id: "winning", label: "AJT winning points" },
-  { id: "pricing", label: "Price comparison" },
-  { id: "platforms", label: "6-platform story" },
+  // { id: "winning", label: "AJT winning points" },
+  // { id: "pricing", label: "Price comparison" },
+  // { id: "platforms", label: "6-platform story" },
 ];
 
 const styles = {
@@ -1243,45 +1243,6 @@ export default function AJTInteractiveSalesCatalogue() {
     <div style={styles.page}>
       <ResponsiveNote />
       <div style={styles.container}>
-        <div className="ajt-hero-grid" style={styles.heroGrid}>
-          <Card>
-            <div style={styles.cardPad}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 20 }}>
-                <div>
-                  <Badge>Interactive AM Catalogue</Badge>
-                  <h1 style={{ ...styles.title, marginTop: 12 }}>Tailored Hiring Pitch Builder</h1>
-                  <p style={styles.subtitle}>Configure the customer, candidate examples, pricing comparison, and multi-platform value story before or during a sales call.</p>
-                </div>
-                <div style={styles.darkBox}>
-                  <div style={{ color: "#cbd5e1", fontSize: 12 }}>Current package</div>
-                  <div style={{ fontSize: 24, fontWeight: 800 }}>{currency(ajtPrice)}</div>
-                  <div style={{ color: "#cbd5e1", fontSize: 12 }}>6-platform exposure + AJT Care</div>
-                </div>
-              </div>
-
-              <div className="ajt-form-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-                <Field label="Customer"><TextInput value={customerName} onChange={setCustomerName} /></Field>
-                <Field label="Hiring role"><TextInput value={jobTitle} onChange={setJobTitle} /></Field>
-                <Field label="Hiring need"><TextInput value={hiringNeed} onChange={setHiringNeed} /></Field>
-                <Field label="AJT price"><TextInput type="number" value={ajtPrice} onChange={(value) => setAjtPrice(Math.max(0, safeNumber(value)))} /></Field>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <div style={styles.cardPad}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Icon name="sparkles" />
-                <h2 style={{ margin: 0, fontSize: 20 }}>Pitch angle</h2>
-              </div>
-              <p style={styles.subtitle}>For <b>{customerName}</b>, position AJT as a lower-risk hiring partner for <b>{jobTitle}</b>: wider distribution, masked candidate proof, hands-on support, and a performance backstop if applicant volume is weak.</p>
-              <div style={{ ...styles.mutedBox, marginTop: 16 }}>
-                <div style={{ fontWeight: 800 }}>Candidate proof angle</div>
-                <p style={{ ...styles.small, marginBottom: 0 }}>Show relevant candidate snapshots first: latest company exposure, experience, availability, languages, commute fit, and career highlights. This makes the catalogue more concrete than a generic job-slot pitch.</p>
-              </div>
-            </div>
-          </Card>
-        </div>
 
         <div className="ajt-tabs" style={styles.tabList}>
           {tabs.map((tab) => (
