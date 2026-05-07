@@ -931,8 +931,18 @@ function isTestProfile(p) {
   return (
     TEST_PATTERN.test(p.name) ||
     TEST_PATTERN.test(p.latestPosition) ||
-    /\b(dummy|sample|fake|trial)\b/i.test(p.careerSnapshot)
+    TEST_PATTERN.test(p.careerSnapshot || "") ||
+    TEST_PATTERN.test(p.industry || "") ||
+    TEST_PATTERN.test(p.education || "") ||
+    TEST_PATTERN.test(p.urgency || "") ||
+    (p.skills || []).some((s) => TEST_PATTERN.test(s)) ||
+    (p.qualitySignals || []).some((s) => TEST_PATTERN.test(s))
   );
+}
+
+function isOpenToWork(p) {
+  const av = (p.availability || "").trim();
+  return av.length > 0 && av !== "—";
 }
 
 const PROXY_SECRET = import.meta.env.VITE_PROXY_SECRET || "";
@@ -1179,14 +1189,16 @@ export default function AJTInteractiveSalesCatalogue() {
       return [...pool]
         .filter((p) => {
           if (isTestProfile(p)) return false;
-          if (!p.isOpenToWork && !p.availability) return false;
           if (requiredLanguages.length > 0 && !requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang)))) return false;
-          const hasRealPosition = p.latestPosition && p.latestPosition.replace(/[^a-zA-Z]/g, "").length > 2;
-          if (!hasRealPosition && !p.careerSnapshot && p.skills.length === 0) return false;
-          if (!p.latestPosition && !p.careerSnapshot && p.skills.length === 0 && p.languages.length === 0) return false;
+          // Drop only truly empty profiles — no position, no snapshot, no skills, no languages, and no experience
+          if (!p.latestPosition && !p.careerSnapshot && p.skills.length === 0 && p.languages.length === 0 && !p.experience) return false;
           return true;
         })
-        .sort((a, b) => b.match - a.match);
+        .sort((a, b) => {
+          const aOtw = isOpenToWork(a), bOtw = isOpenToWork(b);
+          if (aOtw !== bOtw) return bOtw ? 1 : -1;
+          return b.match - a.match;
+        });
     }
     let result = pool.filter((p) => !isTestProfile(p));
     if (locationFilter.trim()) {
@@ -1195,7 +1207,11 @@ export default function AJTInteractiveSalesCatalogue() {
     if (requiredLanguages.length > 0) {
       result = result.filter((p) => requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang))));
     }
-    return [...result].sort((a, b) => b.match - a.match);
+    return [...result].sort((a, b) => {
+      const aOtw = isOpenToWork(a), bOtw = isOpenToWork(b);
+      if (aOtw !== bOtw) return bOtw ? 1 : -1;
+      return b.match - a.match;
+    });
   }, [pool, isLiveData, locationFilter, requiredLanguages]);
 
   const INITIAL_SHOW = 9;
@@ -1555,6 +1571,11 @@ export default function AJTInteractiveSalesCatalogue() {
                           />
                           <h3 style={{ margin: 0, fontSize: 18 }}>{p.name.split(" ").map((w) => w[0]).join(".")}</h3>
                           <Icon name="eyeOff" size={18} />
+                          {!isOpenToWork(p) && (
+                            <span style={{ marginLeft: "auto", fontSize: 11, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 4, padding: "2px 7px", fontWeight: 600, whiteSpace: "nowrap" }}>
+                              Not open to work
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div style={{ ...styles.mutedBox, marginTop: 16, padding: 14 }}>
