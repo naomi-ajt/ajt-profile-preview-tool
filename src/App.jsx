@@ -1128,6 +1128,7 @@ export default function AJTInteractiveSalesCatalogue() {
   const [titleQuery, setTitleQuery] = useState("");
   const [debouncedTitle, setDebouncedTitle] = useState("");
   const [selectedProfileIds, setSelectedProfileIds] = useState(new Set());
+  const [expandedSkills, setExpandedSkills] = useState(new Set());
   const profileCardsRef = useRef(null);
 
   const testResult = useMemo(() => runCatalogueTests(), []);
@@ -1264,39 +1265,125 @@ export default function AJTInteractiveSalesCatalogue() {
     setPool((prev) => prev.map((p) => (p.id === id ? { ...p, [key]: value } : p)));
   }
 
-  async function handleShare() {
+  function handleShare() {
     if (selectedProfileIds.size === 0) return;
-    // Temporarily hide unselected cards so only selected ones are captured
-    const cardEls = profileCardsRef.current
-      ? Array.from(profileCardsRef.current.querySelectorAll("[data-profile-id]"))
-      : [];
-    const hidden = cardEls.filter((el) => !selectedProfileIds.has(el.getAttribute("data-profile-id")));
-    hidden.forEach((el) => { el.style.display = "none"; });
-    try {
-      const html2canvas = (await import("html2canvas")).default;
-      const canvas = await html2canvas(profileCardsRef.current, {
-        backgroundColor: "#f8fafc",
-        scale: 2,
-        useCORS: true,
-        logging: false,
-      });
-      if (navigator.clipboard && window.ClipboardItem) {
-        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-      } else {
-        const link = document.createElement("a");
-        link.download = `candidates-${selectedJobType.toLowerCase().replace(/\s+/g, "-")}.jpg`;
-        link.href = canvas.toDataURL("image/jpeg", 0.92);
-        link.click();
-      }
-      setShared(true);
-      setTimeout(() => setShared(false), 2500);
-    } catch {
-      setShared(true);
-      setTimeout(() => setShared(false), 2500);
-    } finally {
-      hidden.forEach((el) => { el.style.display = ""; });
+    const profiles = displayedProfiles.filter((p) => selectedProfileIds.has(p.id));
+
+    const cardHtml = profiles.map((p) => {
+      const bullets = summaries[p.id]?.length ? summaries[p.id] : p.qualitySignals;
+      const visibleSkills = p.skills.slice(0, 5);
+      const hiddenSkills = p.skills.slice(5);
+      const hasMore = hiddenSkills.length > 0;
+      const cardId = p.id.replace(/[^a-zA-Z0-9]/g, "-");
+
+      return `
+      <div class="card">
+        <div class="card-header">
+          <span class="name">${p.name.split(" ").map((w) => w[0]).join(".")}</span>
+          <span class="badge-anon">🔒 Anonymised</span>
+        </div>
+        <div class="muted-box">
+          <div class="label">Latest position / company</div>
+          <div class="position">${p.latestPosition}</div>
+          <div class="industry">${p.industry}</div>
+        </div>
+        <div class="meta">
+          <span class="bold">${p.experience ? `${p.experience} experience` : "—"}</span>
+          <span class="dot">·</span>
+          <span class="bold">${p.availability} availability</span>
+          ${p.applicationCount > 0 ? `<span class="dot">·</span><span class="muted">${p.applicationCount} application${p.applicationCount !== 1 ? "s" : ""}</span>` : ""}
+        </div>
+        <div class="edu">${p.education}</div>
+        <div class="section">
+          <div class="label">Languages</div>
+          <div class="badges">${p.languages.map((l) => `<span class="badge">${l}</span>`).join("")}</div>
+        </div>
+        <div class="section">
+          <div class="label">Skills</div>
+          <div class="badges" id="skills-${cardId}">
+            ${visibleSkills.map((s) => `<span class="badge">${s}</span>`).join("")}
+            ${hasMore ? `
+            <span class="badge hidden-skills" id="hidden-${cardId}" style="display:none">${hiddenSkills.map((s) => `<span class="badge">${s}</span>`).join("")}</span>
+            <button class="toggle-btn" onclick="toggleSkills('${cardId}')" id="btn-${cardId}">+${hiddenSkills.length} more</button>
+            ` : ""}
+          </div>
+        </div>
+        ${bullets.length ? `
+        <div class="section">
+          <div class="label">Career highlights</div>
+          <ul class="bullets">${bullets.map((b) => `<li>${b}</li>`).join("")}</ul>
+        </div>` : ""}
+      </div>`;
+    }).join("\n");
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Candidate Profiles – ${selectedJobType}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 24px; background: #f8fafc; font-family: Inter, system-ui, sans-serif; font-size: 14px; color: #0f172a; }
+    h1 { font-size: 20px; font-weight: 800; margin: 0 0 4px; }
+    .subtitle { color: #64748b; font-size: 13px; margin-bottom: 32px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 20px; }
+    .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+    .name { font-size: 18px; font-weight: 900; }
+    .badge-anon { font-size: 11px; color: #94a3b8; margin-left: auto; }
+    .muted-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-top: 4px; }
+    .label { color: #64748b; font-size: 12px; font-weight: 800; margin-bottom: 6px; }
+    .position { font-weight: 900; margin-top: 4px; }
+    .industry { font-size: 12px; color: #475569; margin-top: 6px; }
+    .meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; }
+    .bold { font-weight: 700; }
+    .dot { color: #cbd5e1; }
+    .muted { color: #64748b; }
+    .edu { margin-top: 6px; color: #475569; font-size: 13px; }
+    .section { margin-top: 16px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+    .badge { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 600; color: #334155; }
+    .hidden-skills { display: contents !important; }
+    .toggle-btn { background: none; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 3px 10px; font-size: 12px; color: #64748b; cursor: pointer; font-family: inherit; }
+    .toggle-btn:hover { background: #f1f5f9; }
+    .bullets { margin: 0; padding-left: 18px; color: #475569; font-size: 13px; line-height: 1.65; }
+    footer { margin-top: 40px; text-align: center; font-size: 12px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <h1>${selectedJobType} Candidates</h1>
+  <p class="subtitle">${profiles.length} profile${profiles.length !== 1 ? "s" : ""} · Shared via AJobThing Catalogue · ${new Date().toLocaleDateString("en-MY", { day: "numeric", month: "long", year: "numeric" })}</p>
+  <div class="grid">
+    ${cardHtml}
+  </div>
+  <footer>Profiles are anonymised. Contact AJobThing to unlock full details.</footer>
+  <script>
+    function toggleSkills(id) {
+      var hidden = document.getElementById('hidden-' + id);
+      var btn = document.getElementById('btn-' + id);
+      if (!hidden || !btn) return;
+      var isHidden = hidden.style.display === 'none';
+      hidden.style.display = isHidden ? 'contents' : 'none';
+      btn.textContent = isHidden ? 'Show less' : btn.dataset.label;
+      if (!btn.dataset.label) { btn.dataset.label = btn.textContent; }
     }
+    // Store original labels on load
+    document.querySelectorAll('.toggle-btn').forEach(function(btn) {
+      btn.dataset.label = btn.textContent.trim();
+    });
+  <\/script>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html" });
+    const link = document.createElement("a");
+    link.download = `candidates-${selectedJobType.toLowerCase().replace(/\s+/g, "-")}.html`;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    setShared(true);
+    setTimeout(() => setShared(false), 2500);
   }
 
   return (
@@ -1455,7 +1542,7 @@ export default function AJTInteractiveSalesCatalogue() {
                   }}
                 >
                   <Icon name="share" size={16} />
-                  {shared ? "Copied as image" : `Share ${selectedProfileIds.size} profile${selectedProfileIds.size !== 1 ? "s" : ""}`}
+                  {shared ? "Downloaded!" : `Share ${selectedProfileIds.size > 0 ? selectedProfileIds.size : ""} profile${selectedProfileIds.size !== 1 ? "s" : ""} as HTML`}
                 </button>
               </div>
 
@@ -1519,7 +1606,18 @@ export default function AJTInteractiveSalesCatalogue() {
                       </div>
                       <div style={{ marginTop: 16 }}>
                         <div style={{ color: "#64748b", fontSize: 12, fontWeight: 800, marginBottom: 8 }}>Skills</div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{p.skills.map((s) => <Badge key={s} light>{s}</Badge>)}</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {(expandedSkills.has(p.id) ? p.skills : p.skills.slice(0, 5)).map((s) => <Badge key={s} light>{s}</Badge>)}
+                          {p.skills.length > 5 && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedSkills((prev) => { const next = new Set(prev); next.has(p.id) ? next.delete(p.id) : next.add(p.id); return next; })}
+                              style={{ background: "none", border: "1px dashed #cbd5e1", borderRadius: 6, padding: "2px 8px", fontSize: 12, color: "#64748b", cursor: "pointer" }}
+                            >
+                              {expandedSkills.has(p.id) ? "Show less" : `+${p.skills.length - 5} more`}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div style={{ marginTop: 16 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
