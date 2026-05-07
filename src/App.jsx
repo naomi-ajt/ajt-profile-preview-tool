@@ -1114,7 +1114,7 @@ export default function AJTInteractiveSalesCatalogue() {
   const [targetApplicants, setTargetApplicants] = useState(30);
   const [pool, setPool] = useState(profilePool);
   const [competitors, setCompetitors] = useState(competitorDefaults);
-  const [selectedJobType, setSelectedJobType] = useState("Customer Service");
+
   const [locationFilter, setLocationFilter] = useState("");
   const [requiredLanguages, setRequiredLanguages] = useState([]);
   const [shared, setShared] = useState(false);
@@ -1140,12 +1140,19 @@ export default function AJTInteractiveSalesCatalogue() {
   }, [titleQuery]);
 
   useEffect(() => {
+    if (!debouncedTitle) {
+      setPool(profilePool);
+      setIsLiveData(false);
+      setApiLoading(false);
+      setApiError(null);
+      return;
+    }
     let cancelled = false;
     setApiLoading(true);
     setApiError(null);
     setPool([]);
     setShowAll(false);
-    const query = { jobType: selectedJobType, location: locationFilter, languages: requiredLanguages, titleQuery: debouncedTitle };
+    const query = { jobType: "", location: locationFilter, languages: requiredLanguages, titleQuery: debouncedTitle };
     fetchAllLiveProfiles(query)
       .then((profiles) => {
         if (cancelled) return;
@@ -1165,18 +1172,15 @@ export default function AJTInteractiveSalesCatalogue() {
       })
       .finally(() => { if (!cancelled) setApiLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedJobType, locationFilter, requiredLanguages, debouncedTitle, refreshKey]);
+  }, [locationFilter, requiredLanguages, debouncedTitle, refreshKey]);
 
   const eligibleProfiles = useMemo(() => {
     if (isLiveData) {
       return [...pool]
         .filter((p) => {
           if (isTestProfile(p)) return false;
-          // Keep candidates who are explicitly open to work OR who have set an availability
           if (!p.isOpenToWork && !p.availability) return false;
-          if (!debouncedTitle && !seekingMatchesJobType(p, selectedJobType)) return false;
           if (requiredLanguages.length > 0 && !requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang)))) return false;
-          // Drop ghost profiles: no real position data, or nothing useful at all
           const hasRealPosition = p.latestPosition && p.latestPosition.replace(/[^a-zA-Z]/g, "").length > 2;
           if (!hasRealPosition && !p.careerSnapshot && p.skills.length === 0) return false;
           if (!p.latestPosition && !p.careerSnapshot && p.skills.length === 0 && p.languages.length === 0) return false;
@@ -1184,7 +1188,7 @@ export default function AJTInteractiveSalesCatalogue() {
         })
         .sort((a, b) => b.match - a.match);
     }
-    let result = pool.filter((p) => p.jobType === selectedJobType && !isTestProfile(p));
+    let result = pool.filter((p) => !isTestProfile(p));
     if (locationFilter.trim()) {
       result = result.filter((p) => p.location.toLowerCase().includes(locationFilter.toLowerCase().trim()));
     }
@@ -1192,7 +1196,7 @@ export default function AJTInteractiveSalesCatalogue() {
       result = result.filter((p) => requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang))));
     }
     return [...result].sort((a, b) => b.match - a.match);
-  }, [pool, isLiveData, selectedJobType, locationFilter, requiredLanguages, debouncedTitle]);
+  }, [pool, isLiveData, locationFilter, requiredLanguages]);
 
   const INITIAL_SHOW = 9;
   const displayedProfiles = useMemo(
@@ -1303,8 +1307,8 @@ export default function AJTInteractiveSalesCatalogue() {
           <div class="badges" id="skills-${cardId}">
             ${visibleSkills.map((s) => `<span class="badge">${s}</span>`).join("")}
             ${hasMore ? `
-            <span class="badge hidden-skills" id="hidden-${cardId}" style="display:none">${hiddenSkills.map((s) => `<span class="badge">${s}</span>`).join("")}</span>
-            <button class="toggle-btn" onclick="toggleSkills('${cardId}')" id="btn-${cardId}">+${hiddenSkills.length} more</button>
+            <div id="hidden-${cardId}" style="display:none;flex-wrap:wrap;gap:6px;">${hiddenSkills.map((s) => `<span class="badge">${s}</span>`).join("")}</div>
+            <button class="toggle-btn" onclick="toggleSkills('${cardId}')" id="btn-${cardId}" data-count="${hiddenSkills.length}">+${hiddenSkills.length} more</button>
             ` : ""}
           </div>
         </div>
@@ -1321,7 +1325,7 @@ export default function AJTInteractiveSalesCatalogue() {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Candidate Profiles – ${selectedJobType}</title>
+  <title>Candidate Profiles${debouncedTitle ? ` – ${debouncedTitle}` : ""}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     body { margin: 0; padding: 32px 24px; background: #f8fafc; font-family: Inter, system-ui, sans-serif; font-size: 14px; color: #0f172a; }
@@ -1344,7 +1348,6 @@ export default function AJTInteractiveSalesCatalogue() {
     .section { margin-top: 16px; }
     .badges { display: flex; flex-wrap: wrap; gap: 6px; }
     .badge { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 600; color: #334155; }
-    .hidden-skills { display: contents !important; }
     .toggle-btn { background: none; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 3px 10px; font-size: 12px; color: #64748b; cursor: pointer; font-family: inherit; }
     .toggle-btn:hover { background: #f1f5f9; }
     .bullets { margin: 0; padding-left: 18px; color: #475569; font-size: 13px; line-height: 1.65; }
@@ -1352,7 +1355,7 @@ export default function AJTInteractiveSalesCatalogue() {
   </style>
 </head>
 <body>
-  <h1>${selectedJobType} Candidates</h1>
+  <h1>${debouncedTitle ? debouncedTitle.charAt(0).toUpperCase() + debouncedTitle.slice(1) + " " : ""}Candidates</h1>
   <p class="subtitle">${profiles.length} profile${profiles.length !== 1 ? "s" : ""} · Shared via AJobThing Catalogue · ${new Date().toLocaleDateString("en-MY", { day: "numeric", month: "long", year: "numeric" })}</p>
   <div class="grid">
     ${cardHtml}
@@ -1364,21 +1367,16 @@ export default function AJTInteractiveSalesCatalogue() {
       var btn = document.getElementById('btn-' + id);
       if (!hidden || !btn) return;
       var isHidden = hidden.style.display === 'none';
-      hidden.style.display = isHidden ? 'contents' : 'none';
-      btn.textContent = isHidden ? 'Show less' : btn.dataset.label;
-      if (!btn.dataset.label) { btn.dataset.label = btn.textContent; }
+      hidden.style.display = isHidden ? 'flex' : 'none';
+      btn.textContent = isHidden ? 'Show less' : '+' + btn.dataset.count + ' more';
     }
-    // Store original labels on load
-    document.querySelectorAll('.toggle-btn').forEach(function(btn) {
-      btn.dataset.label = btn.textContent.trim();
-    });
   <\/script>
 </body>
 </html>`;
 
     const blob = new Blob([html], { type: "text/html" });
     const link = document.createElement("a");
-    link.download = `candidates-${selectedJobType.toLowerCase().replace(/\s+/g, "-")}.html`;
+    link.download = `candidates-${(debouncedTitle || "profiles").toLowerCase().replace(/\s+/g, "-")}.html`;
     link.href = URL.createObjectURL(blob);
     link.click();
     URL.revokeObjectURL(link.href);
@@ -1472,33 +1470,6 @@ export default function AJTInteractiveSalesCatalogue() {
                 </div>
               </div>
 
-              {/* Job type selector */}
-              <div style={{ marginBottom: 20 }}>
-                <div style={styles.label}>Job type</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {JOB_TYPES.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setSelectedJobType(type)}
-                      style={{
-                        border: "1px solid",
-                        borderRadius: 12,
-                        padding: "8px 16px",
-                        fontSize: 13,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        borderColor: selectedJobType === type ? "#0f172a" : "#e2e8f0",
-                        background: selectedJobType === type ? "#0f172a" : "#fff",
-                        color: selectedJobType === type ? "#fff" : "#334155",
-                      }}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* Result count + refresh + share */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1509,7 +1480,7 @@ export default function AJTInteractiveSalesCatalogue() {
                     {eligibleProfiles.length > 0 ? (
                       <span>
                         <b>{eligibleProfiles.length}</b> eligible
-                        {debouncedTitle ? ` "${debouncedTitle}"` : ` ${selectedJobType}`} candidate{eligibleProfiles.length !== 1 ? "s" : ""}
+                        {debouncedTitle ? ` "${debouncedTitle}"` : ""} candidate{eligibleProfiles.length !== 1 ? "s" : ""}
                         {(requiredLanguages.length > 0 || locationFilter) ? " matching filters" : ""}
                         {displayedProfiles.length < eligibleProfiles.length ? ` · showing top ${displayedProfiles.length}` : ""}
                       </span>
