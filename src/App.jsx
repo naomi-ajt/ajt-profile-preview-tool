@@ -566,8 +566,8 @@ function computeBusinessScore(raw, education) {
   const eduScore        = scoreEducation(education);
   const coScore         = scoreCompany(raw.workExperiences);
   const completeness    = Math.min(100, Math.max(0, Number(raw.completeness) || 0));
-  // Weights: experience 35%, education 25%, company 25%, completeness 15%
-  return Math.round(expScore * 0.35 + eduScore * 0.25 + coScore * 0.25 + completeness * 0.15);
+  // Weights: company 40%, education 30%, experience 20%, completeness 10%
+  return Math.round(coScore * 0.40 + eduScore * 0.30 + expScore * 0.20 + completeness * 0.10);
 }
 
 // --- End business scoring rules ---
@@ -683,12 +683,19 @@ function normalizeCandidateSearchProfile(raw) {
   const availability = normalizeAvailability(rawAvailability);
   const urgencyPrefix = availability.toLowerCase().includes("immediate") ? "Actively looking" : "Open to offers";
 
-  // Education — lastestEducation is {qualification, school, course, ...}
-  const eduObj = raw.lastestEducation || raw.educations?.[0] || {};
-  const eduQualification = typeof eduObj === "string" ? eduObj : (eduObj.qualification || eduObj.level || "");
-  const eduSchool = typeof eduObj === "object" ? (eduObj.school || "") : "";
-  const eduCourse = typeof eduObj === "object" ? (eduObj.course || "") : "";
-  const education = [eduQualification, eduCourse, eduSchool].filter(Boolean).join(", ");
+  // Education — build from all entries; keep a single string for scoring
+  const formatEduEntry = (e) => {
+    if (typeof e === "string") return e;
+    const q = e.qualification || e.level || "";
+    const c = e.course || "";
+    const s = e.school || "";
+    return [q, c, s].filter(Boolean).join(", ");
+  };
+  const allEduRaw = Array.isArray(raw.educations) && raw.educations.length > 0
+    ? raw.educations
+    : (raw.lastestEducation ? [raw.lastestEducation] : []);
+  const educations = allEduRaw.map(formatEduEntry).filter(Boolean);
+  const education = educations[0] || "";
 
   // Career snapshot — strip PII from free text
   const summary = stripPii(raw.personalDescription || raw.currentJobDescription || "");
@@ -727,6 +734,8 @@ function normalizeCandidateSearchProfile(raw) {
     experience: experienceStr,
     availability,
     education,
+    educations,
+    preferredJobTitle: raw.preferredJobTitle || raw.interest_job_category || "",
     languages,
     workPreference: raw.isRemote ? "Remote / flexible" : "",
     commute: preferredLocs,
@@ -943,6 +952,16 @@ function isTestProfile(p) {
 function isOpenToWork(p) {
   const av = (p.availability || "").trim();
   return av.length > 0 && av !== "—";
+}
+
+// Returns false only when the candidate has a stated preferred job that clearly
+// doesn't overlap with the search title — avoids false exclusions when preference is empty.
+function jobTitleMatches(p, searchTitle) {
+  if (!searchTitle) return true;
+  const preferred = (p.preferredJobTitle || p.jobType || "").toLowerCase();
+  if (!preferred) return true;
+  const words = searchTitle.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  return words.some((w) => preferred.includes(w));
 }
 
 const PROXY_SECRET = import.meta.env.VITE_PROXY_SECRET || "";
@@ -1189,16 +1208,13 @@ export default function AJTInteractiveSalesCatalogue() {
       return [...pool]
         .filter((p) => {
           if (isTestProfile(p)) return false;
+          if (!jobTitleMatches(p, debouncedTitle)) return false;
           if (requiredLanguages.length > 0 && !requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang)))) return false;
           // Drop only truly empty profiles — no position, no snapshot, no skills, no languages, and no experience
           if (!p.latestPosition && !p.careerSnapshot && p.skills.length === 0 && p.languages.length === 0 && !p.experience) return false;
           return true;
         })
-        .sort((a, b) => {
-          const aOtw = isOpenToWork(a), bOtw = isOpenToWork(b);
-          if (aOtw !== bOtw) return bOtw ? 1 : -1;
-          return b.match - a.match;
-        });
+        .sort((a, b) => b.match - a.match);
     }
     let result = pool.filter((p) => !isTestProfile(p));
     if (locationFilter.trim()) {
@@ -1207,12 +1223,8 @@ export default function AJTInteractiveSalesCatalogue() {
     if (requiredLanguages.length > 0) {
       result = result.filter((p) => requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang))));
     }
-    return [...result].sort((a, b) => {
-      const aOtw = isOpenToWork(a), bOtw = isOpenToWork(b);
-      if (aOtw !== bOtw) return bOtw ? 1 : -1;
-      return b.match - a.match;
-    });
-  }, [pool, isLiveData, locationFilter, requiredLanguages]);
+    return [...result].sort((a, b) => b.match - a.match);
+  }, [pool, isLiveData, locationFilter, requiredLanguages, debouncedTitle]);
 
   const INITIAL_SHOW = 9;
   const displayedProfiles = useMemo(
@@ -1313,7 +1325,7 @@ export default function AJTInteractiveSalesCatalogue() {
           <span class="bold">${p.availability} availability</span>
           ${p.applicationCount > 0 ? `<span class="dot">·</span><span class="muted">${p.applicationCount} application${p.applicationCount !== 1 ? "s" : ""}</span>` : ""}
         </div>
-        <div class="edu">${p.education}</div>
+        <div class="edu">${(p.educations && p.educations.length > 0 ? p.educations : p.education ? [p.education] : []).join("<br>")}</div>
         <div class="section">
           <div class="label">Languages</div>
           <div class="badges">${p.languages.map((l) => `<span class="badge">${l}</span>`).join("")}</div>
@@ -1590,7 +1602,11 @@ export default function AJTInteractiveSalesCatalogue() {
                           <span style={{ fontWeight: 700 }}>{p.availability} availability</span>
                           {p.applicationCount > 0 && <><span style={{ color: "#cbd5e1" }}>·</span><span style={{ color: "#64748b" }}>{p.applicationCount} application{p.applicationCount !== 1 ? "s" : ""}</span></>}
                         </div>
-                        <div style={{ marginTop: 6, color: "#475569" }}>{p.education}</div>
+                        <div style={{ marginTop: 6, color: "#475569" }}>
+                          {(p.educations && p.educations.length > 0 ? p.educations : p.education ? [p.education] : []).map((edu, i) => (
+                            <div key={i} style={i > 0 ? { marginTop: 2 } : {}}>{edu}</div>
+                          ))}
+                        </div>
                       </div>
                       <div style={{ marginTop: 16 }}>
                         <div style={{ color: "#64748b", fontSize: 12, fontWeight: 800, marginBottom: 8 }}>Languages</div>
