@@ -654,8 +654,9 @@ function normalizeCandidateSearchProfile(raw) {
   // Extract role from the "Title at Company" string if camelCase fields were empty
   const roleFromPosition = !expJobTitle && latestPosition ? latestPosition.split(" at ")[0].trim() : "";
 
-  // Skills — personalSkills may be strings or objects
-  const rawSkills = Array.isArray(raw.personalSkills) ? raw.personalSkills : [];
+  // Skills — personalSkills (camelCase apps) or skills (snake_case apps like insightsprod)
+  const rawSkills = Array.isArray(raw.personalSkills) ? raw.personalSkills
+    : Array.isArray(raw.skills) ? raw.skills : [];
   const skills = rawSkills
     .map((s) => (typeof s === "string" ? s : s.skill || s.name || s.label || ""))
     .filter(Boolean);
@@ -668,11 +669,15 @@ function normalizeCandidateSearchProfile(raw) {
     .map((l) => (typeof l === "string" ? l : l.language || l.name || l.lang || ""))
     .filter(Boolean);
 
-  // Experience — try direct years first, then convert from months
-  const yoeDirect = raw.years_of_experience ?? raw.yearsOfExperience ?? null;
-  const yoeMonths = raw.yearOfExperienceInMonth ?? raw.monthOfExperience ?? raw.yearsOfExperienceInMonth ?? null;
-  const yoeYears = typeof yoeDirect === "number" ? Math.round(yoeDirect)
-    : typeof yoeMonths === "number" ? Math.floor(yoeMonths / 12) : null;
+  // Experience — try direct years first, then convert from months.
+  // Use Number() coercion because some app sources serialize these as strings.
+  // totalExperienceInMonths mirrors the indexed field implied by the minTotalExperienceInMonths filter.
+  const yoeDirectRaw = raw.years_of_experience ?? raw.yearsOfExperience ?? null;
+  const yoeMonthsRaw = raw.yearOfExperienceInMonth ?? raw.totalExperienceInMonths ?? raw.monthOfExperience ?? raw.yearsOfExperienceInMonth ?? null;
+  const yoeDirect = yoeDirectRaw !== null ? Number(yoeDirectRaw) : null;
+  const yoeMonths = yoeMonthsRaw !== null ? Number(yoeMonthsRaw) : null;
+  const yoeYears = (yoeDirect !== null && !isNaN(yoeDirect)) ? Math.round(yoeDirect)
+    : (yoeMonths !== null && !isNaN(yoeMonths)) ? Math.floor(yoeMonths / 12) : null;
   const experienceStr = yoeYears !== null ? `${yoeYears} year${yoeYears !== 1 ? "s" : ""}` : "";
 
   // Availability — some sources return an opaque enum code in `availability` (e.g. "availability_4")
@@ -700,19 +705,25 @@ function normalizeCandidateSearchProfile(raw) {
   // Education — build from all entries; keep a single string for scoring
   const formatEduEntry = (e) => {
     if (typeof e === "string") return e;
-    const q = e.qualification || e.level || "";
-    const c = e.course || "";
-    const s = e.school || "";
-    return [q, c, s].filter(Boolean).join(", ");
+    const q = e.qualification || e.level || e.qualificationName || "";
+    const c = e.course || e.fieldOfStudy || e.field_of_study || e.major || "";
+    const s = e.school || e.instituteName || e.institute || e.institution
+      || e.schoolName || e.universityName || e.collegeName || e.college || "";
+    const startYear = e.startDate ? String(e.startDate).slice(0, 4) : "";
+    const endYear = e.endDate ? String(e.endDate).slice(0, 4) : "";
+    const yearRange = startYear ? `(${startYear} – ${endYear})` : "";
+    return [[q, c, s].filter(Boolean).join(", "), yearRange].filter(Boolean).join(" ");
   };
   const allEduRaw = Array.isArray(raw.educations) && raw.educations.length > 0
     ? raw.educations
-    : (raw.lastestEducation ? [raw.lastestEducation] : []);
+    : raw.lastestEducation ? [raw.lastestEducation]
+    : raw.education ? [raw.education]
+    : [];
   const educations = allEduRaw.map(formatEduEntry).filter(Boolean);
   const education = educations[0] || "";
 
   // Career snapshot — strip PII from free text
-  const summary = stripPii(raw.personalDescription || raw.currentJobDescription || "");
+  const summary = stripPii(raw.personalDescription || raw.currentJobDescription || raw.resume_summary || "");
 
   // Location — API returns an object {city, state, ...}, not a plain string
   const rawLoc = raw.location;
@@ -731,11 +742,11 @@ function normalizeCandidateSearchProfile(raw) {
 
   // Name — prefer shadow masked name; fall back to generating initials from raw.name
   const shadow = raw.shadow || {};
-  const maskedName = shadow.maskedName || shadow.masked_name || shadow.name ||
+  const maskedName = shadow.maskedName || shadow.masked_name || shadow.name || raw.masked_name ||
     (raw.name ? raw.name.split(/\s+/).map((w) => w[0]?.toUpperCase()).filter(Boolean).join(".") + "." : "—");
 
   return {
-    id: raw.docId || `live-${Math.random().toString(36).slice(2, 9)}`,
+    id: raw.docId || raw.candidate_id || `live-${Math.random().toString(36).slice(2, 9)}`,
     name: maskedName,
     role: expJobTitle || roleFromPosition,
     jobCategory: raw.interest_job_category || "",
@@ -1169,7 +1180,7 @@ export default function AJTInteractiveSalesCatalogue() {
   const [hiringNeed, setHiringNeed] = useState("Fast replacement hiring");
   const [ajtPrice, setAjtPrice] = useState(688);
   const [targetApplicants, setTargetApplicants] = useState(30);
-  const [pool, setPool] = useState(profilePool);
+  const [pool, setPool] = useState([]);
   const [competitors, setCompetitors] = useState(competitorDefaults);
 
   const [locationFilter, setLocationFilter] = useState("");
@@ -1198,7 +1209,7 @@ export default function AJTInteractiveSalesCatalogue() {
 
   useEffect(() => {
     if (!debouncedTitle) {
-      setPool(profilePool);
+      setPool([]);
       setIsLiveData(false);
       setApiLoading(false);
       setApiError(null);
@@ -1217,14 +1228,14 @@ export default function AJTInteractiveSalesCatalogue() {
           setPool(profiles);
           setIsLiveData(true);
         } else {
-          setPool(profilePool);
+          setPool([]);
           setIsLiveData(false);
         }
       })
       .catch((err) => {
         if (cancelled) return;
         setApiError(err.message);
-        setPool(profilePool);
+        setPool([]);
         setIsLiveData(false);
       })
       .finally(() => { if (!cancelled) setApiLoading(false); });
@@ -1361,8 +1372,7 @@ export default function AJTInteractiveSalesCatalogue() {
         </div>
         <div class="meta">
           <span class="bold">${p.experience ? `${p.experience} experience` : "—"}</span>
-          <span class="dot">·</span>
-          <span class="bold">${p.availability} availability</span>
+          ${p.availability ? `<span class="dot">·</span><span class="bold">${p.availability}</span>` : ""}
           ${p.applicationCount > 0 ? `<span class="dot">·</span><span class="muted">${p.applicationCount} application${p.applicationCount !== 1 ? "s" : ""}</span>` : ""}
         </div>
         <div class="edu">${(p.educations && p.educations.length > 0 ? p.educations : p.education ? [p.education] : []).join("<br>")}</div>
@@ -1478,16 +1488,18 @@ export default function AJTInteractiveSalesCatalogue() {
                 <p style={{ ...styles.subtitle, margin: 0 }}>Use this as proof-of-market only. Private data is masked until the proper candidate access workflow is connected.</p>
               </div>
 
-              {/* Live data status bar */}
+              {/* Live data status bar — only shown while loading, on error, or when live results are active */}
+              {(apiLoading || apiError || isLiveData) && (
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, padding: "10px 16px", borderRadius: 14, background: apiError ? "#fef2f2" : apiLoading ? "#eff6ff" : "#f0fdf4", border: `1px solid ${apiError ? "#fecaca" : apiLoading ? "#bfdbfe" : "#bbf7d0"}` }}>
                 <div style={{ flex: 1, fontSize: 13 }}>
                   {apiLoading
                     ? <span style={{ color: "#1d4ed8", fontWeight: 700 }}>⟳ Fetching live profiles…</span>
                     : apiError
-                    ? <span style={{ color: "#991b1b", fontWeight: 700 }}>⚠ Could not reach live data — showing demo profiles. ({apiError})</span>
+                    ? <span style={{ color: "#991b1b", fontWeight: 700 }}>⚠ Could not reach live data. ({apiError})</span>
                     : <span style={{ color: "#166534", fontWeight: 700 }}>✓ Showing live candidate profiles</span>}
                 </div>
               </div>
+              )}
 
               {/* Job title search — queries the full candidate pool */}
               <div style={{ marginBottom: 16 }}>
@@ -1545,7 +1557,9 @@ export default function AJTInteractiveSalesCatalogue() {
                     {isLiveData && pool.length > 0 && (
                       <span style={{ color: "#94a3b8" }}>{pool.length.toLocaleString()} fetched · </span>
                     )}
-                    {eligibleProfiles.length > 0 ? (
+                    {!debouncedTitle && !apiLoading ? (
+                      <span style={{ color: "#94a3b8" }}>Enter a job title above to search for candidates</span>
+                    ) : eligibleProfiles.length > 0 ? (
                       <span>
                         <b>{eligibleProfiles.length}</b> eligible
                         {debouncedTitle ? ` "${debouncedTitle}"` : ""} candidate{eligibleProfiles.length !== 1 ? "s" : ""}
@@ -1553,7 +1567,7 @@ export default function AJTInteractiveSalesCatalogue() {
                         {displayedProfiles.length < eligibleProfiles.length ? ` · showing top ${displayedProfiles.length}` : ""}
                       </span>
                     ) : (
-                      <span>No eligible candidates found{debouncedTitle ? ` for "${debouncedTitle}"` : ""}</span>
+                      <span>No candidates found{debouncedTitle ? ` for "${debouncedTitle}"` : ""}</span>
                     )}
                   </div>
                   <button
@@ -1636,12 +1650,13 @@ export default function AJTInteractiveSalesCatalogue() {
                         <div style={{ marginTop: 6, fontSize: 12, color: "#475569" }}>{p.industry}</div>
                       </div>
                       <div style={{ marginTop: 14, fontSize: 13 }}>
+                        {(p.experience || p.availability || p.applicationCount > 0) && (
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <span style={{ fontWeight: 700 }}>{p.experience ? `${p.experience} experience` : "—"}</span>
-                          <span style={{ color: "#cbd5e1" }}>·</span>
-                          <span style={{ fontWeight: 700 }}>{p.availability} availability</span>
+                          {p.experience && <span style={{ fontWeight: 700 }}>{p.experience} experience</span>}
+                          {p.availability && <><span style={{ color: "#cbd5e1" }}>{p.experience ? "·" : ""}</span><span style={{ fontWeight: 700 }}>{p.availability}</span></>}
                           {p.applicationCount > 0 && <><span style={{ color: "#cbd5e1" }}>·</span><span style={{ color: "#64748b" }}>{p.applicationCount} application{p.applicationCount !== 1 ? "s" : ""}</span></>}
                         </div>
+                        )}
                         <div style={{ marginTop: 6, color: "#475569" }}>
                           {(p.educations && p.educations.length > 0 ? p.educations : p.education ? [p.education] : []).map((edu, i) => (
                             <div key={i} style={i > 0 ? { marginTop: 2 } : {}}>{edu}</div>
