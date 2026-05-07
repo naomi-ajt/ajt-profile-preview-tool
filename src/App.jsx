@@ -654,15 +654,21 @@ function normalizeCandidateSearchProfile(raw) {
   // Extract role from the "Title at Company" string if camelCase fields were empty
   const roleFromPosition = !expJobTitle && latestPosition ? latestPosition.split(" at ")[0].trim() : "";
 
-  // Industry — collect from work experience entries (most-recent-first order preserved from sortedExp),
-  // deduplicate, take up to 2. Fall back to top-level industry fields if work history has none.
-  const expIndustries = sortedExp
-    .map((e) => e.industry || e.industryName || e.jobIndustry || e.sector || "")
-    .filter(Boolean);
-  const uniqueIndustries = [...new Set(expIndustries)].slice(0, 2);
-  const industryLabel = uniqueIndustries.length > 0
-    ? uniqueIndustries.join(", ")
-    : (raw.industry || raw.currentIndustry || "");
+  // Computed experience — sum months from work experience entries where dates are available.
+  // Used as a fallback when the explicit yearOfExperienceInMonth key is absent.
+  // isCurrent=true with no endDate → treat end as today.
+  const computedExpMonths = (() => {
+    const today = new Date();
+    const total = sortedExp.reduce((sum, e) => {
+      const start = e.startDate ? new Date(e.startDate) : null;
+      if (!start || isNaN(start)) return sum;
+      const end = e.endDate ? new Date(e.endDate) : (e.isCurrent ? today : null);
+      if (!end || isNaN(end)) return sum;
+      const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+      return sum + Math.max(0, months);
+    }, 0);
+    return total > 0 ? total : null;
+  })();
 
   // Skills — personalSkills (camelCase apps) or skills (snake_case apps like insightsprod)
   const rawSkills = Array.isArray(raw.personalSkills) ? raw.personalSkills
@@ -683,7 +689,7 @@ function normalizeCandidateSearchProfile(raw) {
   // Use Number() coercion because some app sources serialize these as strings.
   // totalExperienceInMonths mirrors the indexed field implied by the minTotalExperienceInMonths filter.
   const yoeDirectRaw = raw.years_of_experience ?? raw.yearsOfExperience ?? null;
-  const yoeMonthsRaw = raw.yearOfExperienceInMonth ?? raw.totalExperienceInMonths ?? raw.monthOfExperience ?? raw.yearsOfExperienceInMonth ?? null;
+  const yoeMonthsRaw = raw.yearOfExperienceInMonth ?? raw.totalExperienceInMonths ?? raw.monthOfExperience ?? raw.yearsOfExperienceInMonth ?? computedExpMonths ?? null;
   const yoeDirect = yoeDirectRaw !== null ? Number(yoeDirectRaw) : null;
   const yoeMonths = yoeMonthsRaw !== null ? Number(yoeMonthsRaw) : null;
   const yoeYears = (yoeDirect !== null && !isNaN(yoeDirect)) ? Math.round(yoeDirect)
