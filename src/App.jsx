@@ -654,6 +654,16 @@ function normalizeCandidateSearchProfile(raw) {
   // Extract role from the "Title at Company" string if camelCase fields were empty
   const roleFromPosition = !expJobTitle && latestPosition ? latestPosition.split(" at ")[0].trim() : "";
 
+  // Industry — collect from work experience entries (most-recent-first order preserved from sortedExp),
+  // deduplicate, take up to 2. Fall back to top-level industry fields if work history has none.
+  const expIndustries = sortedExp
+    .map((e) => e.industry || e.industryName || e.jobIndustry || e.sector || "")
+    .filter(Boolean);
+  const uniqueIndustries = [...new Set(expIndustries)].slice(0, 2);
+  const industryLabel = uniqueIndustries.length > 0
+    ? uniqueIndustries.join(", ")
+    : (raw.industry || raw.currentIndustry || "");
+
   // Skills — personalSkills (camelCase apps) or skills (snake_case apps like insightsprod)
   const rawSkills = Array.isArray(raw.personalSkills) ? raw.personalSkills
     : Array.isArray(raw.skills) ? raw.skills : [];
@@ -752,7 +762,7 @@ function normalizeCandidateSearchProfile(raw) {
     jobCategory: raw.interest_job_category || "",
     jobType: raw.interest_job_category || raw.preferredJobTitle || expJobTitle || roleFromPosition || "",
     latestPosition,
-    industry: raw.interest_job_category || raw.preferredJobTitle || expJobTitle || roleFromPosition || "",
+    industry: industryLabel,
     careerSnapshot: summary,
     urgency: availability ? `${urgencyPrefix} · ${availability.toLowerCase()} availability` : "",
     location: locationStr,
@@ -1368,7 +1378,6 @@ export default function AJTInteractiveSalesCatalogue() {
         <div class="muted-box">
           <div class="label">Latest position / company</div>
           <div class="position">${p.latestPosition}</div>
-          <div class="industry">${p.industry}</div>
         </div>
         <div class="meta">
           <span class="bold">${p.experience ? `${p.experience} experience` : "—"}</span>
@@ -1647,7 +1656,6 @@ export default function AJTInteractiveSalesCatalogue() {
                       <div style={{ ...styles.mutedBox, marginTop: 16, padding: 14 }}>
                         <div style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>Latest position / company</div>
                         <div style={{ fontWeight: 900, marginTop: 4 }}>{p.latestPosition}</div>
-                        <div style={{ marginTop: 6, fontSize: 12, color: "#475569" }}>{p.industry}</div>
                       </div>
                       <div style={{ marginTop: 14, fontSize: 13 }}>
                         {(p.experience || p.availability || p.applicationCount > 0) && (
