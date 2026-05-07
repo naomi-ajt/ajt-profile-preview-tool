@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Analytics } from '@vercel/analytics/react';
 import { getCachedSummaries, cacheSummaries } from "./summaryCache.js";
 
 const profilePool = [
@@ -1586,6 +1587,7 @@ export default function AJTInteractiveSalesCatalogue() {
           </div>
         </Card>
       </div>
+      <Analytics />
     </div>
   );
 }
