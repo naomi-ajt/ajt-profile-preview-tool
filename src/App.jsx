@@ -562,7 +562,8 @@ function scoreCompany(workExperiences) {
 }
 
 function computeBusinessScore(raw, education) {
-  const expScore        = scoreExperience(raw.yearOfExperienceInMonth);
+  const expMonths = raw.yearOfExperienceInMonth ?? raw.monthOfExperience ?? raw.yearsOfExperienceInMonth ?? null;
+  const expScore        = scoreExperience(expMonths);
   const eduScore        = scoreEducation(education);
   const coScore         = scoreCompany(raw.workExperiences);
   const completeness    = Math.min(100, Math.max(0, Number(raw.completeness) || 0));
@@ -669,18 +670,31 @@ function normalizeCandidateSearchProfile(raw) {
 
   // Experience — try direct years first, then convert from months
   const yoeDirect = raw.years_of_experience ?? raw.yearsOfExperience ?? null;
-  const yoeMonths = raw.yearOfExperienceInMonth ?? raw.yearsOfExperienceInMonth ?? null;
+  const yoeMonths = raw.yearOfExperienceInMonth ?? raw.monthOfExperience ?? raw.yearsOfExperienceInMonth ?? null;
   const yoeYears = typeof yoeDirect === "number" ? Math.round(yoeDirect)
     : typeof yoeMonths === "number" ? Math.floor(yoeMonths / 12) : null;
   const experienceStr = yoeYears !== null ? `${yoeYears} year${yoeYears !== 1 ? "s" : ""}` : "";
 
-  // Availability — normalise raw API enum values to readable labels
-  const rawAvailability = raw.availability || raw.availability_synonym || raw.noticePeriod || raw.notice_period || raw.availabilityPeriod || raw.availabilityStatus || "";
-  if (!rawAvailability && process.env.NODE_ENV !== "production") {
+  // Availability — some sources return an opaque enum code in `availability` (e.g. "availability_4")
+  // while `availability_synonym` carries the human-readable equivalent. Try each source in order,
+  // skipping any value that looks like a bare enum code, so the synonym wins when `availability` is coded.
+  const availabilitySources = [
+    raw.availability_synonym,
+    raw.availability,
+    raw.noticePeriod,
+    raw.notice_period,
+    raw.availabilityPeriod,
+    raw.availabilityStatus,
+  ];
+  const isEnumCode = (v) => /^[a-z_]+_\d+$/i.test(String(v).trim());
+  const resolvedAvRaw = availabilitySources.find((v) => v && !isEnumCode(v))
+    ?? availabilitySources.find(Boolean)
+    ?? "";
+  if (!resolvedAvRaw && process.env.NODE_ENV !== "production") {
     const avKeys = Object.keys(raw).filter((k) => k.toLowerCase().includes("avail") || k.toLowerCase().includes("notice"));
     if (avKeys.length) console.warn("[availability] unrecognised fields:", Object.fromEntries(avKeys.map((k) => [k, raw[k]])));
   }
-  const availability = normalizeAvailability(rawAvailability);
+  const availability = normalizeAvailability(resolvedAvRaw);
   const urgencyPrefix = availability.toLowerCase().includes("immediate") ? "Actively looking" : "Open to offers";
 
   // Education — build from all entries; keep a single string for scoring
