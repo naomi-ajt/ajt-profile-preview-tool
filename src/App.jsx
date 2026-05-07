@@ -743,13 +743,13 @@ function normalizeCandidateSearchProfile(raw) {
 // Session-level cache so switching job types and back doesn't re-fetch
 const profileCache = new Map();
 
-function profileCacheKey({ jobType, location, languages }) {
-  return `${jobType}|${location}|${[...languages].sort().join(",")}`;
+function profileCacheKey({ jobType, location, languages, titleQuery = "" }) {
+  return `${titleQuery}|${jobType}|${location}|${[...languages].sort().join(",")}`;
 }
 
-async function fetchAllLiveProfiles(query, { bust = false } = {}) {
+async function fetchAllLiveProfiles(query) {
   const key = profileCacheKey(query);
-  if (!bust && profileCache.has(key)) return profileCache.get(key);
+  if (profileCache.has(key)) return profileCache.get(key);
 
   const MAX_PAGES = 3;
   let allProfiles = [];
@@ -777,16 +777,16 @@ async function fetchAllLiveProfiles(query, { bust = false } = {}) {
   return unique;
 }
 
-async function fetchLiveProfiles({ jobType, location, languages }, from = 0) {
-  const jobTitle = JOB_TYPE_TO_TITLE[jobType] || jobType.toLowerCase();
+async function fetchLiveProfiles({ jobType, location, languages, titleQuery = "" }, from = 0) {
+  const searchTerm = titleQuery || JOB_TYPE_TO_TITLE[jobType] || jobType.toLowerCase();
   const body = {
     size: 500,
     from,
     sorting: "lastActiveDate",
     ordering: "desc",
-    terms: [jobTitle],
+    terms: [searchTerm],
     jobTitleBooleanFilters: [
-      { title: jobTitle, keywordPriority: "must_have", experiencePreference: "current" },
+      { title: searchTerm, keywordPriority: "must_have", experiencePreference: "current" },
     ],
     ...(location ? { city: [location] } : {}),
     ...(languages.length > 0 ? {
@@ -1125,9 +1125,18 @@ export default function AJTInteractiveSalesCatalogue() {
   const [summariesLoading, setSummariesLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [titleQuery, setTitleQuery] = useState("");
+  const [debouncedTitle, setDebouncedTitle] = useState("");
+  const [selectedProfileIds, setSelectedProfileIds] = useState(new Set());
   const profileCardsRef = useRef(null);
 
   const testResult = useMemo(() => runCatalogueTests(), []);
+
+  // Debounce the title search so we don't fire on every keystroke
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedTitle(titleQuery.trim()), 500);
+    return () => clearTimeout(t);
+  }, [titleQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1135,9 +1144,8 @@ export default function AJTInteractiveSalesCatalogue() {
     setApiError(null);
     setPool([]);
     setShowAll(false);
-    const query = { jobType: selectedJobType, location: locationFilter, languages: requiredLanguages };
-    const bust = refreshKey > 0;
-    fetchAllLiveProfiles(query, { bust })
+    const query = { jobType: selectedJobType, location: locationFilter, languages: requiredLanguages, titleQuery: debouncedTitle };
+    fetchAllLiveProfiles(query)
       .then((profiles) => {
         if (cancelled) return;
         if (profiles.length > 0) {
@@ -1156,7 +1164,7 @@ export default function AJTInteractiveSalesCatalogue() {
       })
       .finally(() => { if (!cancelled) setApiLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedJobType, locationFilter, requiredLanguages, refreshKey]);
+  }, [selectedJobType, locationFilter, requiredLanguages, debouncedTitle, refreshKey]);
 
   const eligibleProfiles = useMemo(() => {
     if (isLiveData) {
@@ -1165,7 +1173,7 @@ export default function AJTInteractiveSalesCatalogue() {
           if (isTestProfile(p)) return false;
           // Keep candidates who are explicitly open to work OR who have set an availability
           if (!p.isOpenToWork && !p.availability) return false;
-          if (!seekingMatchesJobType(p, selectedJobType)) return false;
+          if (!debouncedTitle && !seekingMatchesJobType(p, selectedJobType)) return false;
           if (requiredLanguages.length > 0 && !requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang)))) return false;
           // Drop ghost profiles: no real position data, or nothing useful at all
           const hasRealPosition = p.latestPosition && p.latestPosition.replace(/[^a-zA-Z]/g, "").length > 2;
@@ -1183,13 +1191,18 @@ export default function AJTInteractiveSalesCatalogue() {
       result = result.filter((p) => requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang))));
     }
     return [...result].sort((a, b) => b.match - a.match);
-  }, [pool, isLiveData, selectedJobType, locationFilter, requiredLanguages]);
+  }, [pool, isLiveData, selectedJobType, locationFilter, requiredLanguages, debouncedTitle]);
 
   const INITIAL_SHOW = 9;
   const displayedProfiles = useMemo(
     () => showAll ? eligibleProfiles : eligibleProfiles.slice(0, INITIAL_SHOW),
     [eligibleProfiles, showAll]
   );
+
+  // Default: all displayed profiles are selected for sharing
+  useEffect(() => {
+    setSelectedProfileIds(new Set(displayedProfiles.map((p) => p.id)));
+  }, [displayedProfiles]);
 
   // Summarise the displayed profiles using Claude Haiku — cache hits are free, misses are batched
   useEffect(() => {
@@ -1252,7 +1265,13 @@ export default function AJTInteractiveSalesCatalogue() {
   }
 
   async function handleShare() {
-    if (displayedProfiles.length === 0) return;
+    if (selectedProfileIds.size === 0) return;
+    // Temporarily hide unselected cards so only selected ones are captured
+    const cardEls = profileCardsRef.current
+      ? Array.from(profileCardsRef.current.querySelectorAll("[data-profile-id]"))
+      : [];
+    const hidden = cardEls.filter((el) => !selectedProfileIds.has(el.getAttribute("data-profile-id")));
+    hidden.forEach((el) => { el.style.display = "none"; });
     try {
       const html2canvas = (await import("html2canvas")).default;
       const canvas = await html2canvas(profileCardsRef.current, {
@@ -1275,6 +1294,8 @@ export default function AJTInteractiveSalesCatalogue() {
     } catch {
       setShared(true);
       setTimeout(() => setShared(false), 2500);
+    } finally {
+      hidden.forEach((el) => { el.style.display = ""; });
     }
   }
 
@@ -1313,6 +1334,21 @@ export default function AJTInteractiveSalesCatalogue() {
                     ? <span style={{ color: "#991b1b", fontWeight: 700 }}>⚠ Could not reach live data — showing demo profiles. ({apiError})</span>
                     : <span style={{ color: "#166534", fontWeight: 700 }}>✓ Showing live candidate profiles</span>}
                 </div>
+              </div>
+
+              {/* Job title search — queries the full candidate pool */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={styles.label}>Search job title</div>
+                <input
+                  type="text"
+                  value={titleQuery}
+                  onChange={(e) => setTitleQuery(e.target.value)}
+                  placeholder="e.g. HR Executive, Operations Manager, Sales Engineer…"
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 14, boxSizing: "border-box", outline: "none" }}
+                />
+                {titleQuery && debouncedTitle !== titleQuery && (
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>Searching…</div>
+                )}
               </div>
 
               {/* Requirements panel */}
@@ -1380,18 +1416,23 @@ export default function AJTInteractiveSalesCatalogue() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ ...styles.small }}>
-                    {displayedProfiles.length > 0 ? (
+                    {isLiveData && pool.length > 0 && (
+                      <span style={{ color: "#94a3b8" }}>{pool.length.toLocaleString()} fetched · </span>
+                    )}
+                    {eligibleProfiles.length > 0 ? (
                       <span>
-                        Showing <b>{displayedProfiles.length}</b>{!showAll && eligibleProfiles.length > INITIAL_SHOW ? ` of ${eligibleProfiles.length}` : ""} eligible {selectedJobType} candidate{eligibleProfiles.length !== 1 ? "s" : ""}
-                        {(requiredLanguages.length > 0 || locationFilter) ? " matching your requirements" : ""}
+                        <b>{eligibleProfiles.length}</b> eligible
+                        {debouncedTitle ? ` "${debouncedTitle}"` : ` ${selectedJobType}`} candidate{eligibleProfiles.length !== 1 ? "s" : ""}
+                        {(requiredLanguages.length > 0 || locationFilter) ? " matching filters" : ""}
+                        {displayedProfiles.length < eligibleProfiles.length ? ` · showing top ${displayedProfiles.length}` : ""}
                       </span>
                     ) : (
-                      <span>No candidates match the current requirements for {selectedJobType}</span>
+                      <span>No eligible candidates found{debouncedTitle ? ` for "${debouncedTitle}"` : ""}</span>
                     )}
                   </div>
                   <button
                     type="button"
-                    onClick={() => setRefreshKey((k) => k + 1)}
+                    onClick={() => { profileCache.clear(); setRefreshKey((k) => k + 1); }}
                     disabled={apiLoading}
                     title="Refresh profiles"
                     style={{ background: "none", border: "1px solid #e2e8f0", borderRadius: 8, padding: "4px 10px", cursor: apiLoading ? "default" : "pointer", fontSize: 13, color: "#64748b" }}
@@ -1414,9 +1455,20 @@ export default function AJTInteractiveSalesCatalogue() {
                   }}
                 >
                   <Icon name="share" size={16} />
-                  {shared ? "Copied as image" : `Share these ${displayedProfiles.length} profiles`}
+                  {shared ? "Copied as image" : `Share ${selectedProfileIds.size} profile${selectedProfileIds.size !== 1 ? "s" : ""}`}
                 </button>
               </div>
+
+              {/* Selection controls */}
+              {displayedProfiles.length > 0 && !apiLoading && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, fontSize: 13, color: "#64748b" }}>
+                  <button type="button" onClick={() => setSelectedProfileIds(new Set(displayedProfiles.map((p) => p.id)))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Select all</button>
+                  <span>·</span>
+                  <button type="button" onClick={() => setSelectedProfileIds(new Set())} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#64748b", fontSize: 13 }}>Deselect all</button>
+                  <span>·</span>
+                  <span>{selectedProfileIds.size} of {displayedProfiles.length} selected for sharing</span>
+                </div>
+              )}
 
               {/* Profile cards */}
               {apiLoading && (
@@ -1430,9 +1482,19 @@ export default function AJTInteractiveSalesCatalogue() {
               <div ref={profileCardsRef} className="ajt-grid-3" style={{ ...styles.grid3, display: apiLoading ? "none" : styles.grid3.display }}>
                 {displayedProfiles.map((p) => (
                   <Card key={p.id}>
-                    <div style={{ padding: 20 }}>
+                    <div data-profile-id={p.id} style={{ padding: 20 }}>
                       <div style={{ marginBottom: 14 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedProfileIds.has(p.id)}
+                            onChange={() => setSelectedProfileIds((prev) => {
+                              const next = new Set(prev);
+                              next.has(p.id) ? next.delete(p.id) : next.add(p.id);
+                              return next;
+                            })}
+                            style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#0f172a" }}
+                          />
                           <h3 style={{ margin: 0, fontSize: 18 }}>{p.name.split(" ").map((w) => w[0]).join(".")}</h3>
                           <Icon name="eyeOff" size={18} />
                         </div>
