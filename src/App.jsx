@@ -793,8 +793,8 @@ function normalizeCandidateSearchProfile(raw) {
 // Session-level cache so switching job types and back doesn't re-fetch
 const profileCache = new Map();
 
-function profileCacheKey({ jobType, location, languages, titleQuery = "" }) {
-  return `${titleQuery}|${jobType}|${location}|${[...languages].sort().join(",")}`;
+function profileCacheKey({ jobType, titleQuery = "" }) {
+  return `${titleQuery}|${jobType}`;
 }
 
 async function fetchAllLiveProfiles(query) {
@@ -827,7 +827,7 @@ async function fetchAllLiveProfiles(query) {
   return unique;
 }
 
-async function fetchLiveProfiles({ jobType, location, languages, titleQuery = "" }, from = 0) {
+async function fetchLiveProfiles({ jobType, titleQuery = "" }, from = 0) {
   const searchTerm = titleQuery || JOB_TYPE_TO_TITLE[jobType] || jobType.toLowerCase();
   const body = {
     size: 500,
@@ -838,13 +838,6 @@ async function fetchLiveProfiles({ jobType, location, languages, titleQuery = ""
     jobTitleBooleanFilters: [
       { title: searchTerm, keywordPriority: "must_have", experiencePreference: "current" },
     ],
-    ...(location ? { city: [location] } : {}),
-    ...(languages.length > 0 ? {
-      languageBooleanFilters: languages.map((lang) => ({
-        languages: [LANGUAGE_API_NAMES[lang] || lang.toLowerCase()],
-        keywordPriority: "must_have",
-      })),
-    } : {}),
     app: ["maukerjaprod", "ricebowlprod", "public"],
   };
   const res = await fetch("/api/search", {
@@ -1236,7 +1229,7 @@ export default function AJTInteractiveSalesCatalogue() {
     setApiError(null);
     setPool([]);
     setShowAll(false);
-    const query = { jobType: "", location: locationFilter, languages: requiredLanguages, titleQuery: debouncedTitle };
+    const query = { jobType: "", titleQuery: debouncedTitle };
     fetchAllLiveProfiles(query)
       .then((profiles) => {
         if (cancelled) return;
@@ -1256,7 +1249,7 @@ export default function AJTInteractiveSalesCatalogue() {
       })
       .finally(() => { if (!cancelled) setApiLoading(false); });
     return () => { cancelled = true; };
-  }, [locationFilter, requiredLanguages, debouncedTitle, refreshKey]);
+  }, [debouncedTitle, refreshKey]);
 
   const eligibleProfiles = useMemo(() => {
     // Attach relevance score to each profile once so filter and sort share it
@@ -1276,6 +1269,7 @@ export default function AJTInteractiveSalesCatalogue() {
         .filter((p) => {
           if (isTestProfile(p)) return false;
           if (!passesRelevance(p)) return false;
+          if (locationFilter.trim() && !p.location.toLowerCase().includes(locationFilter.toLowerCase().trim())) return false;
           if (requiredLanguages.length > 0 && !requiredLanguages.every((lang) => p.languages.some((pl) => languageMatches(pl, lang)))) return false;
           // Drop only truly empty profiles — no position, no snapshot, no skills, no languages, and no experience
           if (!p.latestPosition && !p.careerSnapshot && p.skills.length === 0 && p.languages.length === 0 && !p.experience) return false;
