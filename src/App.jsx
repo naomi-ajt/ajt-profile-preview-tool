@@ -766,7 +766,7 @@ function normalizeCandidateSearchProfile(raw) {
     name: maskedName,
     role: expJobTitle || roleFromPosition,
     jobCategory: raw.interest_job_category || "",
-    jobType: raw.interest_job_category || raw.preferredJobTitle || expJobTitle || roleFromPosition || "",
+    jobType: expJobTitle || roleFromPosition || "",
     latestPosition,
     // industry: "",
     careerSnapshot: summary,
@@ -776,7 +776,6 @@ function normalizeCandidateSearchProfile(raw) {
     availability,
     education,
     educations,
-    preferredJobTitle: raw.preferredJobTitle || raw.interest_job_category || "",
     languages,
     workPreference: raw.isRemote ? "Remote / flexible" : "",
     commute: preferredLocs,
@@ -989,7 +988,7 @@ function isOpenToWork(p) {
 }
 
 // Scores how relevant a candidate is to the search title across three signals:
-// current job (strongest), desired job (medium), skills (lightest).
+// current job (strongest), skills (lightest).
 // Returns 0 when no search title is given or when no signal matches.
 function computeRelevanceScore(p, searchTitle) {
   if (!searchTitle) return 0;
@@ -999,17 +998,15 @@ function computeRelevanceScore(p, searchTitle) {
   if (!words.length) return 0;
 
   const currentJob = ((p.role || "") + " " + (p.latestPosition || "")).toLowerCase();
-  const desiredJob = ((p.preferredJobTitle || "") + " " + (p.jobCategory || "") + " " + (p.jobType || "")).toLowerCase();
   const skillsText = (p.skills || []).join(" ").toLowerCase();
 
   const wordFrac = (text) => words.filter((w) => text.includes(w)).length / words.length;
 
   // Exact phrase hit scores highest; word-level overlap is a fallback
   const currentScore = Math.max(currentJob.includes(needle) ? 100 : 0, Math.round(wordFrac(currentJob) * 60));
-  const desiredScore = Math.max(desiredJob.includes(needle) ? 75 : 0, Math.round(wordFrac(desiredJob) * 40));
   const skillsScore  = Math.round(wordFrac(skillsText) * 20);
 
-  return currentScore + desiredScore + skillsScore;
+  return currentScore + skillsScore;
 }
 
 const PROXY_SECRET = import.meta.env.VITE_PROXY_SECRET || "";
@@ -1258,7 +1255,7 @@ export default function AJTInteractiveSalesCatalogue() {
     const passesRelevance = (p) => {
       if (!debouncedTitle) return true;
       // Candidates with no data in any signal are let through to avoid false exclusions
-      const hasSignal = p.latestPosition || p.role || p.preferredJobTitle || p.jobCategory || (p.skills || []).length > 0;
+      const hasSignal = p.latestPosition || p.role || p.jobCategory || (p.skills || []).length > 0;
       return !hasSignal || p.relevanceScore > 0;
     };
 
